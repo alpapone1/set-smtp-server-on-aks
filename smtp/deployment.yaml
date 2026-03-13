@@ -1,0 +1,10 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: smtp
+spec:
+  template:
+    spec:
+      containers:
+        - name: smtp
+          image: nprodnortheuropeccpacr01.azurecr.io/docker-mailserver/docker-mailserver:13.3.1

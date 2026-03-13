@@ -1,0 +1,13 @@
+apiVersion: secrets-store.csi.x-k8s.io/v1
+kind: SecretProviderClass
+metadata:
+  name: sc-kv-test
+spec:
+  parameters:
+    keyvaultName: kv-test
+    tenantID: xxxx-xxxx-xxxx
+    useVMManagedIdentity: "true"
+    usePodIdentity: "false"
+    # clientID azurekeyvaultsecretsprovider-dev-aks-01
+    userAssignedIdentityID: xxx-xxx-xxx-xxx
+  provider: azure

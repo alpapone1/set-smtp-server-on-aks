@@ -1,0 +1,186 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: smtp
+  annotations:
+    reloader.stakater.com/auto: "true"
+spec:
+  progressDeadlineSeconds: 120
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: smtp
+  template:
+    metadata:
+      labels:
+        app: smtp
+        app.kubernetes.io/component: smtp
+        app.kubernetes.io/name: smtp
+      annotations:
+        container.apparmor.security.beta.kubernetes.io/smtp: runtime/default
+        kubectl.kubernetes.io/default-container: "smtp"
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "3903"
+    spec:
+      nodeSelector:
+        agentpool: ccpuserpool3
+      tolerations:
+      - key: CoreServices
+        operator: Equal
+        value: "true"
+        effect: NoSchedule
+      containers:
+        - name: smtp
+          image: northeuropeacr.azurecr.io/docker-mailserver/docker-mailserver:13.3.1
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            # Required to support SGID via `postdrop` executable
+            # in `/var/mail-state` for Postfix (maildrop + public dirs):
+            # https://github.com/docker-mailserver/docker-mailserver/pull/3625
+            allowPrivilegeEscalation: true
+            readOnlyRootFilesystem: false
+            runAsUser: 0
+            runAsGroup: 0
+            runAsNonRoot: false
+            privileged: false
+            capabilities:
+              add:
+                # file permission capabilities
+                - CHOWN
+                - FOWNER
+                - MKNOD
+                - SETGID
+                - SETUID
+                - DAC_OVERRIDE
+                # network capabilities
+                - NET_BIND_SERVICE
+                # miscellaneous  capabilities
+                - SYS_CHROOT
+                - KILL
+              drop: [ALL]
+            seccompProfile:
+              type: RuntimeDefault
+          # You want to tune this to your needs. If you disable ClamAV,
+          #   you can use less RAM and CPU. This becomes important in
+          #   case you're low on resources and Kubernetes refuses to
+          #   schedule new pods.
+          resources:
+            limits:
+              memory: 256Mi
+              cpu: 250m
+            requests:
+              memory: 256Mi
+              cpu: 250m
+          volumeMounts:
+            - name: maincf
+              subPath: postfix-main.cf
+              mountPath: /tmp/docker-mailserver/postfix-main.cf
+              readOnly: true
+            - name: patches
+              subPath: user-patches.sh
+              mountPath: /tmp/docker-mailserver/user-patches.sh
+              readOnly: true
+            - name: cacerts
+              mountPath: /tmp/tls/test-ca.crt
+              subPath: test-ca.crt
+            - name: smtp
+              mountPath: /mnt/secrets-store
+            # other
+            - name: tmp-files
+              mountPath: /tmp
+              readOnly: false
+            - name: smtp-logs
+              mountPath: /var/log/mail
+          ports:
+            - name: transfer
+              containerPort: 25
+              protocol: TCP
+            - name: esmtp-implicit
+              containerPort: 465
+              protocol: TCP
+            - name: esmtp-explicit
+              containerPort: 587
+            - name: imap-implicit
+              containerPort: 993
+              protocol: TCP
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - "ss --listening --tcp | grep -P 'LISTEN.+:smtp' || exit 1"
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 3
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - "ss --listening --tcp | grep -P 'LISTEN.+:smtp' || exit 1"
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 3
+          envFrom:
+            - configMapRef:
+                name: smtp
+            - secretRef:
+                name: smtp
+        - name: mtail
+          image: ghcr.io/google/mtail:3.0.8
+          command:
+            - "/mtail"
+            - "--progs"
+            - "/progs"
+            - "--logs"
+            - "/var/log/mail/mail.log"
+          volumeMounts:
+            - name: smtp-logs
+              mountPath: /var/log/mail
+            - name: mtail-progs
+              mountPath: /progs
+          ports:
+            - name: mtail
+              containerPort: 3903
+              protocol: TCP
+          resources:
+            limits:
+              memory: 128Mi
+              cpu: 250m
+            requests:
+              memory: 128Mi
+              cpu: 250m
+      restartPolicy: Always
+      serviceAccountName: smtp
+      volumes:
+        - name: mtail-progs
+          configMap:
+            defaultMode: 420
+            name: mtail-progs
+        - name: maincf
+          configMap:
+            name: smtp-postfix-maincf
+        - name: patches
+          configMap:
+            name: smtp-user-patches
+        - configMap:
+            items:
+            - key: test-ca.pem
+              path: test-ca.crt
+            name: test-ca
+          name: cacerts
+        # other
+        - name: tmp-files
+          emptyDir: {}
+        - name: smtp-logs
+          emptyDir: {}
+        - csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: smtp
+          name: smtp

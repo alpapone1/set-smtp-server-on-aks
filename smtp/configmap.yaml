@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: smtp
+data:
+  OVERRIDE_HOSTNAME: nprod-ne-smtp.test.internal
+  LOG_LEVEL: info
+  LDAP_QUERY_FILTER_SENDERS: (| (&(objectClass=user)(|(mail=%s))) )
